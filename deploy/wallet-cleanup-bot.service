@@ -1,0 +1,17 @@
+[Unit]
+Description=Wallet Cleanup Telegram Bot
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gpt/.emdash/worktrees/clean-up-1777889916430/wallet-cleanup-bot
+EnvironmentFile=/home/gpt/.emdash/worktrees/clean-up-1777889916430/wallet-cleanup-bot/.env
+Environment=PYTHONPATH=src
+ExecStart=/usr/bin/python3 -m wallet_cleanup_bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+

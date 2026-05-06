@@ -1,0 +1,9 @@
+[project]
+name = "wallet-cleanup-bot"
+version = "0.1.0"
+description = "Telegram-approved EVM wallet cleanup pipeline"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
