@@ -2,8 +2,59 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.request
 from typing import Any
+
+
+# Fallback RPCs per chain_id — tried in order if the primary node returns an error
+_FALLBACK_RPCS: dict[int, list[str]] = {
+    1: [
+        "https://ethereum-rpc.publicnode.com",
+        "https://eth.llamarpc.com",
+        "https://rpc.ankr.com/eth",
+        "https://cloudflare-eth.com",
+    ],
+    56: [
+        "https://bsc-dataseed.binance.org",
+        "https://bsc-dataseed1.binance.org",
+        "https://bsc-dataseed2.binance.org",
+        "https://bsc-dataseed3.binance.org",
+        "https://bsc-rpc.publicnode.com",
+    ],
+    8453: [
+        "https://mainnet.base.org",
+        "https://base-rpc.publicnode.com",
+        "https://base.llamarpc.com",
+    ],
+    42161: [
+        "https://arb1.arbitrum.io/rpc",
+        "https://arbitrum-one-rpc.publicnode.com",
+        "https://rpc.ankr.com/arbitrum",
+    ],
+    10: [
+        "https://mainnet.optimism.io",
+        "https://optimism-rpc.publicnode.com",
+        "https://rpc.ankr.com/optimism",
+    ],
+    137: [
+        "https://polygon-rpc.com",
+        "https://polygon-bor-rpc.publicnode.com",
+        "https://rpc.ankr.com/polygon",
+    ],
+    43114: [
+        "https://api.avax.network/ext/bc/C/rpc",
+        "https://avalanche-c-chain-rpc.publicnode.com",
+    ],
+    59144: [
+        "https://rpc.linea.build",
+        "https://linea-rpc.publicnode.com",
+    ],
+    324: [
+        "https://mainnet.era.zksync.io",
+        "https://zksync-era-rpc.publicnode.com",
+    ],
+}
 
 
 def address_from_key(private_key: str) -> str:
@@ -16,11 +67,14 @@ def execute_with_key(private_key: str, payload: dict[str, Any]) -> list[str]:
     key = _normalize_key(private_key)
     account = Account.from_key(key)
 
-    rpc_url = payload.get("rpc_url")
+    primary_rpc = payload.get("rpc_url")
     chain_id = int(payload["chain_id"])
 
-    if not rpc_url:
+    rpc_candidates = _rpc_list(primary_rpc, chain_id)
+    if not rpc_candidates:
         raise ValueError("RPC URL not configured for this chain")
+
+    rpc_url = _pick_working_rpc(rpc_candidates)
 
     wallet = payload.get("wallet", "")
     if wallet and account.address.lower() != wallet.lower():
@@ -60,6 +114,27 @@ def execute_with_key(private_key: str, payload: dict[str, Any]) -> list[str]:
     )
     tx_hashes.append(main_hash)
     return tx_hashes
+
+
+def _rpc_list(primary: str | None, chain_id: int) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for url in ([primary] if primary else []) + _FALLBACK_RPCS.get(chain_id, []):
+        if url and url not in seen:
+            seen.add(url)
+            result.append(url)
+    return result
+
+
+def _pick_working_rpc(candidates: list[str]) -> str:
+    last_err: Exception = RuntimeError("no RPC candidates")
+    for url in candidates:
+        try:
+            _rpc(url, "eth_blockNumber", [])
+            return url
+        except Exception as err:
+            last_err = err
+    raise ValueError(f"All RPC endpoints failed. Last error: {last_err}")
 
 
 def _normalize_key(key: str) -> str:
@@ -138,7 +213,7 @@ def _rpc(rpc_url: str, method: str, params: list[Any]) -> Any:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=15) as resp:
         result = json.loads(resp.read().decode())
     if "error" in result:
         raise ValueError(f"RPC {method}: {result['error']}")
