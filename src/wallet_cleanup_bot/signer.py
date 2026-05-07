@@ -1,11 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
 from typing import Any
 
+
+# Alchemy supports these chains — used first if ALCHEMY_API_KEY is set
+_ALCHEMY_NETWORK: dict[int, str] = {
+    1: "eth-mainnet",
+    137: "polygon-mainnet",
+    8453: "base-mainnet",
+    42161: "arb-mainnet",
+    10: "opt-mainnet",
+    43114: "avax-mainnet",
+}
 
 # Fallback RPCs per chain_id — truly free, no API key required
 _FALLBACK_RPCS: dict[int, list[str]] = {
@@ -128,9 +139,16 @@ def execute_with_key(private_key: str, payload: dict[str, Any]) -> list[str]:
 
 
 def _rpc_list(primary: str | None, chain_id: int) -> list[str]:
+    alchemy_key = os.getenv("ALCHEMY_API_KEY", "").strip()
+    alchemy: list[str] = []
+    if alchemy_key:
+        network = _ALCHEMY_NETWORK.get(chain_id)
+        if network:
+            alchemy = [f"https://{network}.g.alchemy.com/v2/{alchemy_key}"]
+
     seen: set[str] = set()
     result: list[str] = []
-    for url in ([primary] if primary else []) + _FALLBACK_RPCS.get(chain_id, []):
+    for url in alchemy + ([primary] if primary else []) + _FALLBACK_RPCS.get(chain_id, []):
         if url and url not in seen:
             seen.add(url)
             result.append(url)
