@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import urllib.error
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -46,7 +47,14 @@ class TelegramBotApp:
         offset = self.offset
         self.client.send_message(self.settings.chat_id, "Bot started. Use /help.")
         while True:
-            updates = self.client.get_updates(offset, self.settings.poll_timeout_s)
+            try:
+                updates = self.client.get_updates(offset, self.settings.poll_timeout_s)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 409:
+                    # Another instance is polling — wait for it to time out
+                    time.sleep(self.settings.poll_timeout_s + 2)
+                    continue
+                raise
             for update in updates:
                 offset = int(update["update_id"]) + 1
                 offset = self._handle_update(update, offset)

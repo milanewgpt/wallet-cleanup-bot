@@ -19,7 +19,7 @@ class TelegramSettings:
     bot_token: str
     chat_id: str
     allowed_user_id: int | None = None
-    poll_timeout_s: int = 30
+    poll_timeout_s: int = 10
     approval_timeout_s: int = 900
 
 
