@@ -7,52 +7,63 @@ import urllib.request
 from typing import Any
 
 
-# Fallback RPCs per chain_id — tried in order if the primary node returns an error
+# Fallback RPCs per chain_id — truly free, no API key required
 _FALLBACK_RPCS: dict[int, list[str]] = {
     1: [
-        "https://ethereum-rpc.publicnode.com",
         "https://eth.llamarpc.com",
-        "https://rpc.ankr.com/eth",
+        "https://ethereum-rpc.publicnode.com",
         "https://cloudflare-eth.com",
+        "https://1rpc.io/eth",
     ],
     56: [
         "https://bsc-dataseed.binance.org",
         "https://bsc-dataseed1.binance.org",
         "https://bsc-dataseed2.binance.org",
         "https://bsc-dataseed3.binance.org",
+        "https://bsc-dataseed4.binance.org",
+        "https://bsc-dataseed1.defibit.io",
+        "https://bsc-dataseed2.defibit.io",
+        "https://binance.llamarpc.com",
         "https://bsc-rpc.publicnode.com",
     ],
     8453: [
         "https://mainnet.base.org",
-        "https://base-rpc.publicnode.com",
         "https://base.llamarpc.com",
+        "https://1rpc.io/base",
+        "https://base-rpc.publicnode.com",
     ],
     42161: [
         "https://arb1.arbitrum.io/rpc",
+        "https://arbitrum.llamarpc.com",
+        "https://1rpc.io/arb",
         "https://arbitrum-one-rpc.publicnode.com",
-        "https://rpc.ankr.com/arbitrum",
     ],
     10: [
         "https://mainnet.optimism.io",
+        "https://optimism.llamarpc.com",
+        "https://1rpc.io/op",
         "https://optimism-rpc.publicnode.com",
-        "https://rpc.ankr.com/optimism",
     ],
     137: [
         "https://polygon-rpc.com",
+        "https://polygon.llamarpc.com",
+        "https://1rpc.io/matic",
         "https://polygon-bor-rpc.publicnode.com",
-        "https://rpc.ankr.com/polygon",
     ],
     43114: [
         "https://api.avax.network/ext/bc/C/rpc",
         "https://avalanche-c-chain-rpc.publicnode.com",
+        "https://1rpc.io/avax/c",
     ],
     59144: [
         "https://rpc.linea.build",
         "https://linea-rpc.publicnode.com",
+        "https://1rpc.io/linea",
     ],
     324: [
         "https://mainnet.era.zksync.io",
         "https://zksync-era-rpc.publicnode.com",
+        "https://1rpc.io/zksync2-era",
     ],
 }
 
@@ -130,7 +141,7 @@ def _pick_working_rpc(candidates: list[str]) -> str:
     last_err: Exception = RuntimeError("no RPC candidates")
     for url in candidates:
         try:
-            _rpc(url, "eth_blockNumber", [])
+            _rpc(url, "eth_blockNumber", [], timeout=5)
             return url
         except Exception as err:
             last_err = err
@@ -212,14 +223,14 @@ def _wait_for_receipt(rpc_url: str, tx_hash: str, timeout_s: int = 180) -> None:
     raise TimeoutError(f"tx {tx_hash} not mined after {timeout_s}s")
 
 
-def _rpc(rpc_url: str, method: str, params: list[Any]) -> Any:
+def _rpc(rpc_url: str, method: str, params: list[Any], timeout: int = 15) -> Any:
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
     req = urllib.request.Request(
         rpc_url, data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         result = json.loads(resp.read().decode())
     if "error" in result:
         raise ValueError(f"RPC {method}: {result['error']}")
