@@ -88,7 +88,7 @@ def execute_with_key(private_key: str, payload: dict[str, Any]) -> list[str]:
         if allowance < int(approval["amount"]):
             approve_hash = _sign_and_send(
                 account, rpc_url, chain_id,
-                to=approval["token"],
+                to=_checksum(approval["token"]),
                 value=0,
                 data=_approve_calldata(approval["spender"], int(approval["amount"])),
                 gas_limit=None,
@@ -144,6 +144,11 @@ def _normalize_key(key: str) -> str:
     return key
 
 
+def _checksum(address: str) -> str:
+    from eth_utils import to_checksum_address
+    return to_checksum_address(address)
+
+
 def _sign_and_send(
     account: Any,
     rpc_url: str,
@@ -159,8 +164,9 @@ def _sign_and_send(
     if gas_price:
         gp = int(gas_price, 16) if isinstance(gas_price, str) and gas_price.startswith("0x") else int(gas_price)
 
+    to_addr = _checksum(to)
     tx: dict[str, Any] = {
-        "to": to,
+        "to": to_addr,
         "value": value,
         "data": data,
         "nonce": nonce,
@@ -171,7 +177,7 @@ def _sign_and_send(
     if gas_limit:
         tx["gas"] = int(gas_limit, 16) if isinstance(gas_limit, str) and gas_limit.startswith("0x") else int(gas_limit)
     else:
-        estimated = _rpc(rpc_url, "eth_estimateGas", [{"to": to, "data": data, "value": hex(value), "from": account.address}])
+        estimated = _rpc(rpc_url, "eth_estimateGas", [{"to": to_addr, "data": data, "value": hex(value), "from": account.address}])
         tx["gas"] = int(estimated, 16) + 5000
 
     signed = account.sign_transaction(tx)
