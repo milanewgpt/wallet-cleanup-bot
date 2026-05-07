@@ -15,13 +15,13 @@ from .wallet_store import WalletStore, normalize_wallet
 
 HELP_TEXT = """<b>Wallet Cleanup Bot</b>
 
-/add_wallet label - добавить кошелёк (пришли приватник, удалится мгновенно)
-/remove_wallet 1 или 0x... - удалить кошелёк
-/wallets - список кошельков
-/check_wallet label, 1 или 0x... - проверить конкретный кошелёк
-/check_all - проверить все сохранённые кошельки
-/cancel - отменить ожидание ключа
-/help - команды
+/add_wallet — добавить кошелёк
+/remove_wallet — удалить кошелёк
+/wallets — список кошельков
+/check_wallet — проверить конкретный кошелёк
+/check_all — проверить все кошельки
+/cancel — отменить текущий ввод
+/help — команды
 """
 
 
@@ -38,6 +38,7 @@ class TelegramBotApp:
     pending_proposals: dict[str, Proposal] = field(default_factory=dict)
     pending_key_imports: dict[str, str] = field(default_factory=dict)
     pending_key_executes: dict[str, Any] = field(default_factory=dict)
+    pending_text_inputs: dict[str, str] = field(default_factory=dict)
     offset: int | None = None
 
     def run_forever(self) -> None:
@@ -65,26 +66,30 @@ class TelegramBotApp:
         message_id = message.get("message_id")
         if not text.startswith("/") and self._handle_pending_key(text, message_id):
             return offset
+        if not text.startswith("/"):
+            handled, offset = self._handle_pending_text(text, offset)
+            if handled:
+                return offset
         if not text.startswith("/") and self._handle_pending_withdraw_address(text):
             return offset
 
-        command, args = _split_command(text)
+        command, _args = _split_command(text)
         if command in {"/start", "/help"}:
             self.client.send_message(self.settings.chat_id, HELP_TEXT)
         elif command == "/add_wallet":
-            self._add_wallet(args)
+            self._prompt_add_wallet()
         elif command == "/remove_wallet":
-            self._remove_wallet(args)
+            self._prompt_remove_wallet()
         elif command == "/wallets":
             self._list_wallets()
         elif command == "/check_wallet":
-            offset = self._check_wallet(args, offset)
+            self._prompt_check_wallet()
         elif command == "/check_all":
             offset = self._check_all(offset)
         elif command == "/cancel":
-            self._cancel_pending_key()
+            self._cancel_pending()
         else:
-            self.client.send_message(self.settings.chat_id, "Unknown command. Use /help.")
+            self.client.send_message(self.settings.chat_id, "Неизвестная команда. /help — список команд.")
         return offset
 
     def _message_allowed(self, message: dict[str, Any]) -> bool:
@@ -94,26 +99,28 @@ class TelegramBotApp:
             return True
         return int(message.get("from", {}).get("id", 0)) == self.settings.allowed_user_id
 
-    def _add_wallet(self, args: str) -> None:
-        label = args.strip()
-        if not label:
-            self.client.send_message(self.settings.chat_id, "Usage: /add_wallet label")
-            return
-        self.pending_key_imports[str(self.settings.chat_id)] = label
-        self.client.send_message(
-            self.settings.chat_id,
-            f"Пришли приватный ключ для кошелька <b>{label}</b>.\nСообщение будет удалено мгновенно. /cancel для отмены.",
-        )
+    def _prompt_add_wallet(self) -> None:
+        self.pending_text_inputs[str(self.settings.chat_id)] = "add_wallet_label"
+        self.client.send_message(self.settings.chat_id, "Введи label для нового кошелька:")
 
-    def _remove_wallet(self, args: str) -> None:
-        if not args:
-            self.client.send_message(self.settings.chat_id, "Usage: /remove_wallet 1 or /remove_wallet 0x...")
-            return
+    def _prompt_remove_wallet(self) -> None:
+        self.pending_text_inputs[str(self.settings.chat_id)] = "remove_wallet"
+        wallets = self.wallet_store.list_wallets()
+        if wallets:
+            hints = ", ".join(
+                f"{i + 1} ({w.label or w.address[:8] + '...'})"
+                for i, w in enumerate(wallets)
+            )
+            self.client.send_message(self.settings.chat_id, f"Введи адрес (0x...), label или номер:\n{hints}")
+        else:
+            self.client.send_message(self.settings.chat_id, "Введи адрес (0x...) или label кошелька для удаления:")
+
+    def _do_remove_wallet(self, args: str) -> None:
         wallet = self.wallet_store.remove_wallet(args.strip())
         if wallet is None:
-            self.client.send_message(self.settings.chat_id, "Wallet not found.")
+            self.client.send_message(self.settings.chat_id, "Кошелёк не найден.")
             return
-        self.client.send_message(self.settings.chat_id, f"Removed: <code>{wallet.address}</code>")
+        self.client.send_message(self.settings.chat_id, f"Удалён: <code>{wallet.address}</code>")
 
     def _list_wallets(self) -> None:
         wallets = self.wallet_store.list_wallets()
@@ -127,13 +134,22 @@ class TelegramBotApp:
             lines.append(f"{index}. <code>{wallet.address}</code>{label} ({signer})")
         self.client.send_message(self.settings.chat_id, "\n".join(lines))
 
-    def _check_wallet(self, args: str, offset: int) -> int:
-        if not args:
-            self.client.send_message(self.settings.chat_id, "Usage: /check_wallet label, 1 or 0x...")
-            return offset
+    def _prompt_check_wallet(self) -> None:
+        self.pending_text_inputs[str(self.settings.chat_id)] = "check_wallet"
+        wallets = self.wallet_store.list_wallets()
+        if wallets:
+            hints = ", ".join(
+                f"{i + 1} ({w.label or w.address[:8] + '...'})"
+                for i, w in enumerate(wallets)
+            )
+            self.client.send_message(self.settings.chat_id, f"Введи адрес (0x...), label или номер:\n{hints}")
+        else:
+            self.client.send_message(self.settings.chat_id, "Введи адрес (0x...) или label кошелька для проверки:")
+
+    def _do_check_wallet(self, args: str, offset: int) -> int:
         wallet = self.wallet_store.resolve_wallet(args.strip())
         if wallet is None:
-            self.client.send_message(self.settings.chat_id, "Wallet not found or invalid address.")
+            self.client.send_message(self.settings.chat_id, "Кошелёк не найден или неверный адрес.")
             return offset
         return self._run_check(wallet.address, offset)
 
@@ -203,7 +219,10 @@ class TelegramBotApp:
             return
         if parts[2] == "withdraw":
             self.pending_withdraw_items[str(self.settings.chat_id)] = item
-            self.client.send_message(self.settings.chat_id, f"Send destination address for <code>{item.id}</code>.")
+            self.client.send_message(
+                self.settings.chat_id,
+                f"Введи адрес назначения (0x...) для вывода {item.asset.token} ({item.asset.chain}):",
+            )
             return
         if parts[2] == "route":
             self._build_single_route(item)
@@ -309,11 +328,36 @@ class TelegramBotApp:
         except Exception as err:
             self.client.send_message(self.settings.chat_id, f"Ошибка исполнения: {err}")
 
-    def _cancel_pending_key(self) -> None:
+    def _handle_pending_text(self, text: str, offset: int) -> tuple[bool, int]:
         chat_id = str(self.settings.chat_id)
-        had = chat_id in self.pending_key_imports or chat_id in self.pending_key_executes
+        state = self.pending_text_inputs.get(chat_id)
+        if state is None:
+            return False, offset
+        self.pending_text_inputs.pop(chat_id)
+        if state == "add_wallet_label":
+            label = text.strip()
+            self.pending_key_imports[chat_id] = label
+            self.client.send_message(
+                self.settings.chat_id,
+                f"Пришли приватный ключ для кошелька <b>{label}</b>.\nСообщение удалится мгновенно. /cancel для отмены.",
+            )
+        elif state == "remove_wallet":
+            self._do_remove_wallet(text)
+        elif state == "check_wallet":
+            offset = self._do_check_wallet(text, offset)
+        return True, offset
+
+    def _cancel_pending(self) -> None:
+        chat_id = str(self.settings.chat_id)
+        had = any(
+            chat_id in d
+            for d in (self.pending_key_imports, self.pending_key_executes,
+                      self.pending_text_inputs, self.pending_withdraw_items)
+        )
         self.pending_key_imports.pop(chat_id, None)
         self.pending_key_executes.pop(chat_id, None)
+        self.pending_text_inputs.pop(chat_id, None)
+        self.pending_withdraw_items.pop(chat_id, None)
         self.client.send_message(self.settings.chat_id, "Отменено." if had else "Нечего отменять.")
 
     def _handle_pending_withdraw_address(self, text: str) -> bool:
@@ -323,7 +367,7 @@ class TelegramBotApp:
         try:
             destination = normalize_wallet(text)
         except ValueError:
-            self.client.send_message(self.settings.chat_id, "Invalid EVM address. Send destination as 0x...")
+            self.client.send_message(self.settings.chat_id, "Неверный адрес. Введи EVM-адрес в формате 0x...")
             return True
         self.pending_withdraw_items.pop(str(self.settings.chat_id), None)
         self._send_withdraw_execute_link(item, destination)
