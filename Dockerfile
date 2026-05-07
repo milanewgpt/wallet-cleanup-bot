@@ -8,5 +8,6 @@ COPY src/ src/
 COPY pyproject.toml .
 
 ENV PYTHONPATH=src
+ENV PYTHONUNBUFFERED=1
 
 CMD ["python", "-m", "wallet_cleanup_bot.main"]
