@@ -181,7 +181,7 @@ def _sign_and_send(
         tx["gas"] = int(estimated, 16) + 5000
 
     signed = account.sign_transaction(tx)
-    raw = "0x" + signed.rawTransaction.hex()
+    raw = "0x" + bytes(signed.rawTransaction).hex()
     return _rpc(rpc_url, "eth_sendRawTransaction", [raw])
 
 

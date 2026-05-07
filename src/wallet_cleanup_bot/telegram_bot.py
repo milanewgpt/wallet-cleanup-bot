@@ -39,6 +39,7 @@ class TelegramBotApp:
     pending_key_imports: dict[str, str] = field(default_factory=dict)
     pending_key_executes: dict[str, Any] = field(default_factory=dict)
     pending_text_inputs: dict[str, str] = field(default_factory=dict)
+    wallet_keys: dict[str, str] = field(default_factory=dict)  # address.lower() → key, RAM only
     offset: int | None = None
 
     def run_forever(self) -> None:
@@ -307,17 +308,21 @@ class TelegramBotApp:
         return False
 
     def _handle_key_for_import(self, private_key: str, label: str) -> None:
-        from .signer import address_from_key
+        from .signer import address_from_key, _normalize_key
         try:
             address = address_from_key(private_key)
         except Exception as err:
             self.client.send_message(self.settings.chat_id, f"Неверный приватный ключ: {err}")
             return
         self.wallet_store.add_wallet(address, label)
+        self.wallet_keys[address.lower()] = _normalize_key(private_key)
         self.client.send_message(self.settings.chat_id, f"Кошелёк добавлен: <code>{address}</code> — {label}")
 
     def _handle_key_for_execute(self, private_key: str, payload: dict[str, Any]) -> None:
-        from .signer import execute_with_key
+        from .signer import execute_with_key, _normalize_key
+        wallet = payload.get("wallet", "")
+        if wallet:
+            self.wallet_keys[wallet.lower()] = _normalize_key(private_key)
         self.client.send_message(self.settings.chat_id, "Подписываю и отправляю транзакцию...")
         try:
             tx_hashes = execute_with_key(private_key, payload)
@@ -391,11 +396,15 @@ class TelegramBotApp:
         except Exception as err:
             self.client.send_message(self.settings.chat_id, f"Failed to build tx: {err}")
             return
-        self.pending_key_executes[str(self.settings.chat_id)] = payload
-        self.client.send_message(
-            self.settings.chat_id,
-            f"Готово к исполнению <code>{proposal.id}</code>.\nПришли приватный ключ для <code>{stored.address}</code> — сообщение удалится мгновенно. /cancel для отмены.",
-        )
+        cached_key = self.wallet_keys.get(stored.address.lower())
+        if cached_key:
+            self._handle_key_for_execute(cached_key, payload)
+        else:
+            self.pending_key_executes[str(self.settings.chat_id)] = payload
+            self.client.send_message(
+                self.settings.chat_id,
+                f"Готово к исполнению <code>{proposal.id}</code>.\nПришли приватный ключ для <code>{stored.address}</code> — сообщение удалится мгновенно. /cancel для отмены.",
+            )
 
     def _send_withdraw_execute_link(self, item: Any, destination: str) -> None:
         from .webapp_server import withdraw_execution_payload
@@ -415,11 +424,16 @@ class TelegramBotApp:
         except Exception as err:
             self.client.send_message(self.settings.chat_id, f"Failed to build tx: {err}")
             return
-        self.pending_key_executes[str(self.settings.chat_id)] = payload
-        self.client.send_message(
-            self.settings.chat_id,
-            format_withdraw_ready(item, destination) + "\n\nПришли приватный ключ — сообщение удалится мгновенно. /cancel для отмены.",
-        )
+        cached_key = self.wallet_keys.get(stored.address.lower())
+        if cached_key:
+            self.client.send_message(self.settings.chat_id, format_withdraw_ready(item, destination))
+            self._handle_key_for_execute(cached_key, payload)
+        else:
+            self.pending_key_executes[str(self.settings.chat_id)] = payload
+            self.client.send_message(
+                self.settings.chat_id,
+                format_withdraw_ready(item, destination) + "\n\nПришли приватный ключ — сообщение удалится мгновенно. /cancel для отмены.",
+            )
 
     def _request_approval(self, proposal: Proposal, offset: int) -> tuple[ApprovalDecision, int]:
         message = self.client.send_message(
