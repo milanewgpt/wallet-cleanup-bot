@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from .config import CleanupConfig
@@ -15,14 +15,13 @@ from .wallet_store import WalletStore, normalize_wallet
 
 HELP_TEXT = """<b>Wallet Cleanup Bot</b>
 
-/add_wallet label - добавить кошелек через encrypted import form
-/remove_wallet 1 или 0x... - удалить кошелек
+/add_wallet label - добавить кошелёк (пришли приватник, удалится мгновенно)
+/remove_wallet 1 или 0x... - удалить кошелёк
 /wallets - список кошельков
-/check_wallet label, 1 или 0x... - проверить конкретный кошелек
-/check_all - проверить все сохраненные кошельки
+/check_wallet label, 1 или 0x... - проверить конкретный кошелёк
+/check_all - проверить все сохранённые кошельки
+/cancel - отменить ожидание ключа
 /help - команды
-
-Private keys are not accepted in Telegram.
 """
 
 
@@ -37,6 +36,8 @@ class TelegramBotApp:
     scan_store: ScanStore | None = None
     pending_withdraw_items: dict[str, Any] = field(default_factory=dict)
     pending_proposals: dict[str, Proposal] = field(default_factory=dict)
+    pending_key_imports: dict[str, str] = field(default_factory=dict)
+    pending_key_executes: dict[str, Any] = field(default_factory=dict)
     offset: int | None = None
 
     def run_forever(self) -> None:
@@ -61,6 +62,9 @@ class TelegramBotApp:
         text = str(message.get("text", "")).strip()
         if not text:
             return offset
+        message_id = message.get("message_id")
+        if not text.startswith("/") and self._handle_pending_key(text, message_id):
+            return offset
         if not text.startswith("/") and self._handle_pending_withdraw_address(text):
             return offset
 
@@ -77,6 +81,8 @@ class TelegramBotApp:
             offset = self._check_wallet(args, offset)
         elif command == "/check_all":
             offset = self._check_all(offset)
+        elif command == "/cancel":
+            self._cancel_pending_key()
         else:
             self.client.send_message(self.settings.chat_id, "Unknown command. Use /help.")
         return offset
@@ -93,17 +99,10 @@ class TelegramBotApp:
         if not label:
             self.client.send_message(self.settings.chat_id, "Usage: /add_wallet label")
             return
-        if _looks_like_private_key(label):
-            self.client.send_message(
-                self.settings.chat_id,
-                "Do not send private keys in Telegram. Use the Import key button.",
-            )
-            return
-        url = import_url(self.config.webapp_base_url, label, self.config.webapp_import_token)
+        self.pending_key_imports[str(self.settings.chat_id)] = label
         self.client.send_message(
             self.settings.chat_id,
-            f"Import wallet for label <b>{label}</b>.",
-            reply_markup={"inline_keyboard": [[{"text": "Import key", "url": url}]]},
+            f"Пришли приватный ключ для кошелька <b>{label}</b>.\nСообщение будет удалено мгновенно. /cancel для отмены.",
         )
 
     def _remove_wallet(self, args: str) -> None:
@@ -260,6 +259,63 @@ class TelegramBotApp:
             self.client.answer_callback_query(str(callback["id"]), "Threshold")
             self.client.send_message(self.settings.chat_id, "Threshold change flow is not connected yet.")
 
+    def _handle_pending_key(self, text: str, message_id: int | None) -> bool:
+        chat_id = str(self.settings.chat_id)
+        in_import = chat_id in self.pending_key_imports
+        in_execute = chat_id in self.pending_key_executes
+        is_pk = _looks_like_private_key(text)
+
+        if in_import or in_execute:
+            if not is_pk:
+                self.client.send_message(chat_id, "Ожидаю приватный ключ (64 hex-символа, 0x опционально). /cancel для отмены.")
+                return True
+            if message_id is not None:
+                self.client.delete_message(chat_id, message_id)
+            if in_import:
+                label = self.pending_key_imports.pop(chat_id)
+                self._handle_key_for_import(text, label)
+            else:
+                payload = self.pending_key_executes.pop(chat_id)
+                self._handle_key_for_execute(text, payload)
+            return True
+
+        if is_pk:
+            if message_id is not None:
+                self.client.delete_message(chat_id, message_id)
+            self.client.send_message(chat_id, "Приватный ключ удалён для безопасности. Используй /add_wallet для добавления кошелька.")
+            return True
+
+        return False
+
+    def _handle_key_for_import(self, private_key: str, label: str) -> None:
+        from .signer import address_from_key
+        try:
+            address = address_from_key(private_key)
+        except Exception as err:
+            self.client.send_message(self.settings.chat_id, f"Неверный приватный ключ: {err}")
+            return
+        self.wallet_store.add_wallet(address, label)
+        self.client.send_message(self.settings.chat_id, f"Кошелёк добавлен: <code>{address}</code> — {label}")
+
+    def _handle_key_for_execute(self, private_key: str, payload: dict[str, Any]) -> None:
+        from .signer import execute_with_key
+        self.client.send_message(self.settings.chat_id, "Подписываю и отправляю транзакцию...")
+        try:
+            tx_hashes = execute_with_key(private_key, payload)
+            self.client.send_message(
+                self.settings.chat_id,
+                "Готово: " + ", ".join(f"<code>{h}</code>" for h in tx_hashes),
+            )
+        except Exception as err:
+            self.client.send_message(self.settings.chat_id, f"Ошибка исполнения: {err}")
+
+    def _cancel_pending_key(self) -> None:
+        chat_id = str(self.settings.chat_id)
+        had = chat_id in self.pending_key_imports or chat_id in self.pending_key_executes
+        self.pending_key_imports.pop(chat_id, None)
+        self.pending_key_executes.pop(chat_id, None)
+        self.client.send_message(self.settings.chat_id, "Отменено." if had else "Нечего отменять.")
+
     def _handle_pending_withdraw_address(self, text: str) -> bool:
         item = self.pending_withdraw_items.get(str(self.settings.chat_id))
         if item is None:
@@ -274,50 +330,52 @@ class TelegramBotApp:
         return True
 
     def _send_execute_link(self, wallet: str, proposal: Proposal) -> None:
+        from .webapp_server import execution_payload
         stored = self.wallet_store.resolve_wallet(wallet)
-        if stored is None or not stored.encrypted_keystore:
-            self.client.send_message(self.settings.chat_id, "No encrypted keystore found for this wallet.")
+        if stored is None:
+            self.client.send_message(self.settings.chat_id, "Wallet not found.")
             return
-        execution_id = proposal.id
         execution = PendingExecution(
-            id=execution_id,
+            id=proposal.id,
             wallet=stored.address,
             label=stored.label or "",
-            encrypted_keystore=stored.encrypted_keystore,
+            encrypted_keystore="",
             proposal=proposal,
         )
-        self.pending_executions.put(execution)
-        url = execute_url(self.config.webapp_base_url, execution_id, self.config.webapp_import_token)
-        message = self.client.send_message(
+        try:
+            payload = execution_payload(execution)
+        except Exception as err:
+            self.client.send_message(self.settings.chat_id, f"Failed to build tx: {err}")
+            return
+        self.pending_key_executes[str(self.settings.chat_id)] = payload
+        self.client.send_message(
             self.settings.chat_id,
-            f"Ready to execute <code>{execution_id}</code>. Unlock locally to sign and send.",
-            reply_markup={"inline_keyboard": [[{"text": "Unlock & Execute", "url": url}]]},
+            f"Готово к исполнению <code>{proposal.id}</code>.\nПришли приватный ключ для <code>{stored.address}</code> — сообщение удалится мгновенно. /cancel для отмены.",
         )
-        message_id = int(message["result"]["message_id"])
-        self.pending_executions.put(replace(execution, message_chat_id=str(self.settings.chat_id), message_id=message_id))
 
     def _send_withdraw_execute_link(self, item: Any, destination: str) -> None:
+        from .webapp_server import withdraw_execution_payload
         stored = self.wallet_store.resolve_wallet(item.wallet)
-        if stored is None or not stored.encrypted_keystore:
-            self.client.send_message(self.settings.chat_id, "No encrypted keystore found for this wallet.")
+        if stored is None:
+            self.client.send_message(self.settings.chat_id, "Wallet not found.")
             return
-        execution_id = f"{item.id}:withdraw"
         execution = PendingExecution(
-            id=execution_id,
+            id=f"{item.id}:withdraw",
             wallet=stored.address,
             label=stored.label or "",
-            encrypted_keystore=stored.encrypted_keystore,
+            encrypted_keystore="",
             withdraw=PendingWithdraw(asset=item.asset, destination=destination),
         )
-        self.pending_executions.put(execution)
-        url = execute_url(self.config.webapp_base_url, execution_id, self.config.webapp_import_token)
-        message = self.client.send_message(
+        try:
+            payload = withdraw_execution_payload(execution)
+        except Exception as err:
+            self.client.send_message(self.settings.chat_id, f"Failed to build tx: {err}")
+            return
+        self.pending_key_executes[str(self.settings.chat_id)] = payload
+        self.client.send_message(
             self.settings.chat_id,
-            format_withdraw_ready(item, destination),
-            reply_markup={"inline_keyboard": [[{"text": "Unlock & Send", "url": url}]]},
+            format_withdraw_ready(item, destination) + "\n\nПришли приватный ключ — сообщение удалится мгновенно. /cancel для отмены.",
         )
-        message_id = int(message["result"]["message_id"])
-        self.pending_executions.put(replace(execution, message_chat_id=str(self.settings.chat_id), message_id=message_id))
 
     def _request_approval(self, proposal: Proposal, offset: int) -> tuple[ApprovalDecision, int]:
         message = self.client.send_message(

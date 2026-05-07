@@ -1,0 +1,145 @@
+from __future__ import annotations
+
+import json
+import time
+import urllib.request
+from typing import Any
+
+
+def address_from_key(private_key: str) -> str:
+    from eth_account import Account
+    return Account.from_key(_normalize_key(private_key)).address
+
+
+def execute_with_key(private_key: str, payload: dict[str, Any]) -> list[str]:
+    from eth_account import Account
+    key = _normalize_key(private_key)
+    account = Account.from_key(key)
+
+    rpc_url = payload.get("rpc_url")
+    chain_id = int(payload["chain_id"])
+
+    if not rpc_url:
+        raise ValueError("RPC URL not configured for this chain")
+
+    wallet = payload.get("wallet", "")
+    if wallet and account.address.lower() != wallet.lower():
+        raise ValueError("Private key does not match wallet address")
+
+    tx_hashes: list[str] = []
+
+    approval = payload.get("approval")
+    if approval:
+        allowance = _erc20_allowance(rpc_url, approval["token"], account.address, approval["spender"])
+        if allowance < int(approval["amount"]):
+            approve_hash = _sign_and_send(
+                account, rpc_url, chain_id,
+                to=approval["token"],
+                value=0,
+                data=_approve_calldata(approval["spender"], int(approval["amount"])),
+                gas_limit=None,
+                gas_price=None,
+            )
+            tx_hashes.append(approve_hash)
+            _wait_for_receipt(rpc_url, approve_hash)
+
+    tx = payload["transaction"]
+    value_raw = tx.get("value", "0x0")
+    if isinstance(value_raw, str) and value_raw.startswith("0x"):
+        value = int(value_raw, 16)
+    else:
+        value = int(value_raw or 0)
+
+    main_hash = _sign_and_send(
+        account, rpc_url, chain_id,
+        to=tx["to"],
+        value=value,
+        data=tx.get("data") or "0x",
+        gas_limit=tx.get("gasLimit"),
+        gas_price=tx.get("gasPrice"),
+    )
+    tx_hashes.append(main_hash)
+    return tx_hashes
+
+
+def _normalize_key(key: str) -> str:
+    key = key.strip()
+    if not key.startswith("0x"):
+        key = "0x" + key
+    return key
+
+
+def _sign_and_send(
+    account: Any,
+    rpc_url: str,
+    chain_id: int,
+    to: str,
+    value: int,
+    data: str,
+    gas_limit: str | int | None,
+    gas_price: str | int | None,
+) -> str:
+    nonce = int(_rpc(rpc_url, "eth_getTransactionCount", [account.address, "latest"]), 16)
+    gp = int(_rpc(rpc_url, "eth_gasPrice", []), 16)
+    if gas_price:
+        gp = int(gas_price, 16) if isinstance(gas_price, str) and gas_price.startswith("0x") else int(gas_price)
+
+    tx: dict[str, Any] = {
+        "to": to,
+        "value": value,
+        "data": data,
+        "nonce": nonce,
+        "gasPrice": gp,
+        "chainId": chain_id,
+    }
+
+    if gas_limit:
+        tx["gas"] = int(gas_limit, 16) if isinstance(gas_limit, str) and gas_limit.startswith("0x") else int(gas_limit)
+    else:
+        estimated = _rpc(rpc_url, "eth_estimateGas", [{"to": to, "data": data, "value": hex(value), "from": account.address}])
+        tx["gas"] = int(estimated, 16) + 5000
+
+    signed = account.sign_transaction(tx)
+    raw = "0x" + signed.rawTransaction.hex()
+    return _rpc(rpc_url, "eth_sendRawTransaction", [raw])
+
+
+def _erc20_allowance(rpc_url: str, token: str, owner: str, spender: str) -> int:
+    owner_hex = owner.removeprefix("0x").lower().rjust(64, "0")
+    spender_hex = spender.removeprefix("0x").lower().rjust(64, "0")
+    data = f"0xdd62ed3e{owner_hex}{spender_hex}"
+    result = _rpc(rpc_url, "eth_call", [{"to": token, "data": data}, "latest"])
+    return int(result, 16)
+
+
+def _approve_calldata(spender: str, amount: int) -> str:
+    spender_hex = spender.removeprefix("0x").lower().rjust(64, "0")
+    amount_hex = hex(amount).removeprefix("0x").rjust(64, "0")
+    return f"0x095ea7b3{spender_hex}{amount_hex}"
+
+
+def _wait_for_receipt(rpc_url: str, tx_hash: str, timeout_s: int = 180) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        try:
+            receipt = _rpc(rpc_url, "eth_getTransactionReceipt", [tx_hash])
+            if receipt is not None:
+                return
+        except Exception:
+            pass
+        time.sleep(3)
+    raise TimeoutError(f"tx {tx_hash} not mined after {timeout_s}s")
+
+
+def _rpc(rpc_url: str, method: str, params: list[Any]) -> Any:
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}).encode()
+    req = urllib.request.Request(
+        rpc_url, data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read().decode())
+    if "error" in result:
+        raise ValueError(f"RPC {method}: {result['error']}")
+    return result["result"]
