@@ -45,7 +45,12 @@ class TelegramBotApp:
 
     def run_forever(self) -> None:
         offset = self.offset
-        self.client.send_message(self.settings.chat_id, "Bot started. Use /help.")
+        for attempt in range(10):
+            try:
+                self.client.send_message(self.settings.chat_id, "Bot started. Use /help.")
+                break
+            except (urllib.error.URLError, OSError):
+                time.sleep(5 * (attempt + 1))
         while True:
             try:
                 updates = self.client.get_updates(offset, self.settings.poll_timeout_s)
@@ -55,6 +60,9 @@ class TelegramBotApp:
                     time.sleep(self.settings.poll_timeout_s + 2)
                     continue
                 raise
+            except (urllib.error.URLError, OSError):
+                time.sleep(10)
+                continue
             for update in updates:
                 offset = int(update["update_id"]) + 1
                 offset = self._handle_update(update, offset)
