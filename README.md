@@ -1,28 +1,36 @@
 # Wallet Cleanup Bot
 
-Бот для аккуратной зачистки мелких EVM-балансов через Telegram approve-flow.
+A Telegram bot for safely cleaning up small EVM wallet balances through an approval-based flow.
 
-Пайплайн:
+Pipeline:
 
-1. `scan` — собрать native/ERC-20 балансы по EVM-сетям.
-2. `normalize` — привести активы к единой структуре, оценить gas/liquidity/risk.
-3. `filter` — применить protected gas chains, threshold и экономику.
-4. `route` — запросить маршрут swap/bridge/swap+bridge.
-5. `proposal` — показать пользователю действия поштучно.
-6. `approve/execute` — исполнить только одобренные пункты и записать лог.
+1. `scan` — collect native/ERC-20 balances across EVM chains.
+2. `normalize` — convert assets into a unified structure and estimate gas, liquidity, and risk.
+3. `filter` — apply protected gas chains, thresholds, and cleanup economics.
+4. `route` — request a swap/bridge/swap+bridge route.
+5. `proposal` — show actions to the user one by one.
+6. `approve/execute` — execute only approved items and write an execution log.
 
-## Статус
+## Status
 
-Подключены Telegram bot, encrypted wallet import form, live native/ERC-20 scan, LI.FI route proposals, approve flow, browser-side signing/execution и direct withdraw.
+Implemented components:
 
-## Быстрый запуск
+- Telegram bot
+- encrypted wallet import form
+- live native/ERC-20 scan
+- LI.FI route proposals
+- approval flow
+- browser-side signing/execution
+- direct withdraw flow
+
+## Quick start
 
 ```bash
 python3 -m py_compile src/wallet_cleanup_bot/*.py
 PYTHONPATH=src python3 -m unittest discover -s tests
 ```
 
-Запуск Telegram bot:
+Run the Telegram bot:
 
 ```bash
 set -a
@@ -31,17 +39,17 @@ set +a
 PYTHONPATH=src python3 -m wallet_cleanup_bot.main
 ```
 
-## Telegram
+## Telegram setup
 
-1. Создай бота через `@BotFather` и положи токен в `TELEGRAM_BOT_TOKEN`.
-2. Напиши боту любое сообщение.
-3. Получи `chat_id` через Bot API:
+1. Create a bot via `@BotFather` and put the token in `TELEGRAM_BOT_TOKEN`.
+2. Send any message to the bot.
+3. Get `chat_id` through the Bot API:
 
 ```bash
 curl "https://api.telegram.org/bot<token>/getUpdates"
 ```
 
-4. Заполни `.env` по примеру `.env.example`:
+4. Fill `.env` using `.env.example` as a template:
 
 ```bash
 TELEGRAM_BOT_TOKEN=123:abc
@@ -49,9 +57,9 @@ TELEGRAM_CHAT_ID=123456789
 TELEGRAM_ALLOWED_USER_ID=123456789
 ```
 
-`.env` добавлен в `.gitignore`; токены не должны попадать в репозиторий.
+`.env` is included in `.gitignore`; tokens must not be committed to the repository.
 
-5. Запусти бота:
+5. Start the bot:
 
 ```bash
 set -a
@@ -60,44 +68,46 @@ set +a
 PYTHONPATH=src python3 -m wallet_cleanup_bot.main
 ```
 
-`DEMO_DATA_ENABLED=false` по умолчанию, чтобы бот не показывал hardcoded demo balances как реальные данные кошелька.
+## Runtime flags
 
-`LIVE_NATIVE_SCANNER_ENABLED=true` включает real native balance scan через public RPC для Ethereum, Base, Arbitrum, Optimism, Polygon, BNB, Avalanche, Linea и zkSync. ERC-20 scanner требует отдельный indexer API.
+`DEMO_DATA_ENABLED=false` by default so the bot does not show hardcoded demo balances as real wallet data.
 
-`MORALIS_ERC20_SCANNER_ENABLED=true` включает ERC-20 balances через Moralis Token Balances endpoint.
+`LIVE_NATIVE_SCANNER_ENABLED=true` enables real native balance scanning through public RPCs for Ethereum, Base, Arbitrum, Optimism, Polygon, BNB, Avalanche, Linea, and zkSync. ERC-20 scanning requires a separate indexer API.
 
-`LIVE_ROUTES_ENABLED=true` включает LI.FI quote proposals. После `Approve` бот дает ссылку `Unlock & Execute`: encrypted keystore расшифровывается в браузере, там же подписываются approval/route транзакции.
+`MORALIS_ERC20_SCANNER_ENABLED=true` enables ERC-20 balances through the Moralis Token Balances endpoint.
+
+`LIVE_ROUTES_ENABLED=true` enables LI.FI quote proposals. After `Approve`, the bot provides an `Unlock & Execute` link: the encrypted keystore is decrypted in the browser, and approval/route transactions are signed there.
 
 ## Telegram commands
 
-- `/add_wallet label` — создать кнопку `Import key`; ключ шифруется в web/Mini App до отправки на сервер.
-- `/remove_wallet 1` или `/remove_wallet 0x...` — удалить кошелек.
-- `/wallets` — показать сохраненные кошельки.
-- `/check_wallet label`, `/check_wallet 1` или `/check_wallet 0x...` — запустить проверку по конкретному кошельку.
-- `/check_all` — проверить все сохраненные кошельки.
+- `/add_wallet label` — create an `Import key` button; the key is encrypted in the web/Mini App before being sent to the server.
+- `/remove_wallet 1` or `/remove_wallet 0x...` — remove a wallet.
+- `/wallets` — show saved wallets.
+- `/check_wallet label`, `/check_wallet 1`, or `/check_wallet 0x...` — check a specific wallet.
+- `/check_all` — check all saved wallets.
 
-Приватные ключи не вводятся в Telegram-сообщение. Они вводятся в web/Mini App форму, шифруются на устройстве через `ethers.Wallet.encrypt(password)`, и на сервер сохраняется только encrypted keystore JSON.
+Private keys are never typed into Telegram messages. They are entered in the web/Mini App form, encrypted locally on the device with `ethers.Wallet.encrypt(password)`, and only the encrypted keystore JSON is stored on the server.
 
-Для каждого найденного баланса бот показывает карточку с кнопками:
+For each detected balance, the bot shows a card with buttons:
 
-- `Find route` — найти маршрут swap/bridge через LI.FI.
-- `Withdraw` — указать адрес в Telegram и открыть `Unlock & Send` для прямого ERC-20/native вывода.
-- `Skip` — закрыть карточку.
+- `Find route` — find a swap/bridge route through LI.FI.
+- `Withdraw` — enter a destination address in Telegram and open `Unlock & Send` for direct ERC-20/native withdrawal.
+- `Skip` — close the card.
 
-Для телефона нужен публичный HTTPS `WEBAPP_BASE_URL`. Локальный `http://127.0.0.1:8787` подходит только для проверки на сервере.
+For mobile use, `WEBAPP_BASE_URL` must be a public HTTPS URL. Local `http://127.0.0.1:8787` is suitable only for server-side testing.
 
-Текущий постоянный URL:
+Current persistent URL:
 
 ```bash
 WEBAPP_BASE_URL=https://guacamole60977.hostkey.in
 ```
 
-Он проксируется через существующий nginx-certbot контейнер на локальный web server `127.0.0.1:8787`.
+It is proxied through the existing nginx-certbot container to the local web server at `127.0.0.1:8787`.
 
-## Правила фильтрации
+## Filtering rules
 
-- В protected gas chains native token не трогается, пока значение ниже threshold.
-- Если native token в protected chain выше threshold, предлагается cleanup excess.
-- ERC-20 можно обрабатывать и в protected, и в обычных сетях.
-- Актив пропускается, если value меньше gas fee, нет ликвидности или токен подозрительный.
-- Approve всегда поштучный: `approve`, `skip`, `blacklist_token`, `change_threshold`.
+- In protected gas chains, the native token is not touched while its value is below the threshold.
+- If the native token in a protected chain is above the threshold, the bot proposes cleaning up only the excess.
+- ERC-20 tokens can be processed in both protected and regular chains.
+- An asset is skipped if its value is below the gas fee, there is no liquidity, or the token looks suspicious.
+- Approval is always item-by-item: `approve`, `skip`, `blacklist_token`, `change_threshold`.
