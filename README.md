@@ -1,12 +1,12 @@
 # Wallet Cleanup Bot
 
-A wallet operations assistant for tracking wallets, cleanup flows, and alerts.
+Wallet cleanup assistant bot for checking wallets, listing tracked wallets, and running cleanup/status checks across configured addresses. It helps identify wallets that need attention or cleanup actions.
 
 ## Features
 
-- Telegram bot command handling and operational notifications.
-- Containerized deployment support.
-- Test or validation scripts are included.
+- Tracks configured wallets and wallet status.
+- Provides commands to add, remove, list, check one wallet, or check all wallets.
+- Documents wallet/API configuration without committing sensitive data.
 
 ## Architecture
 
