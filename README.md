@@ -1,113 +1,88 @@
 # Wallet Cleanup Bot
 
-A Telegram bot for safely cleaning up small EVM wallet balances through an approval-based flow.
+A wallet operations assistant for tracking wallets, cleanup flows, and alerts.
 
-Pipeline:
+## Features
 
-1. `scan` — collect native/ERC-20 balances across EVM chains.
-2. `normalize` — convert assets into a unified structure and estimate gas, liquidity, and risk.
-3. `filter` — apply protected gas chains, thresholds, and cleanup economics.
-4. `route` — request a swap/bridge/swap+bridge route.
-5. `proposal` — show actions to the user one by one.
-6. `approve/execute` — execute only approved items and write an execution log.
+- Telegram bot command handling and operational notifications.
+- Containerized deployment support.
+- Test or validation scripts are included.
 
-## Status
+## Architecture
 
-Implemented components:
+- **Repository:** `MilaArtyNew/wallet-cleanup-bot`
+- **Primary stack:** Python, Docker, systemd, Railway
 
-- Telegram bot
-- encrypted wallet import form
-- live native/ERC-20 scan
-- LI.FI route proposals
-- approval flow
-- browser-side signing/execution
-- direct withdraw flow
+## Configuration
 
-## Quick start
+Configure the service with environment variables. Do not commit real secrets to the repository.
 
-```bash
-python3 -m py_compile src/wallet_cleanup_bot/*.py
-PYTHONPATH=src python3 -m unittest discover -s tests
-```
+- `ALCHEMY_API_KEY` — required or optional runtime configuration. See deployment environment for the actual value.
+- `DEFAULT_GAS_THRESHOLD_USD` — required or optional runtime configuration. See deployment environment for the actual value.
+- `DEMO_DATA_ENABLED` — required or optional runtime configuration. See deployment environment for the actual value.
+- `LIFI_API_KEY` — required or optional runtime configuration. See deployment environment for the actual value.
+- `LIFI_SLIPPAGE` — required or optional runtime configuration. See deployment environment for the actual value.
+- `LIVE_NATIVE_SCANNER_ENABLED` — required or optional runtime configuration. See deployment environment for the actual value.
+- `LIVE_ROUTES_ENABLED` — required or optional runtime configuration. See deployment environment for the actual value.
+- `LOG_PATH` — required or optional runtime configuration. See deployment environment for the actual value.
+- `MORALIS_API_KEY` — required or optional runtime configuration. See deployment environment for the actual value.
+- `MORALIS_ERC20_SCANNER_ENABLED` — required or optional runtime configuration. See deployment environment for the actual value.
+- `TARGET_CHAIN` — required or optional runtime configuration. See deployment environment for the actual value.
+- `TARGET_TOKEN` — required or optional runtime configuration. See deployment environment for the actual value.
+- `TELEGRAM_ALLOWED_USER_ID` — required or optional runtime configuration. See deployment environment for the actual value.
+- `TELEGRAM_BOT_TOKEN` — required or optional runtime configuration. See deployment environment for the actual value.
+- `TELEGRAM_CHAT_ID` — required or optional runtime configuration. See deployment environment for the actual value.
+- `WALLET_STORE_PATH` — required or optional runtime configuration. See deployment environment for the actual value.
+- `WEBAPP_BASE_URL` — required or optional runtime configuration. See deployment environment for the actual value.
+- `WEBAPP_HOST` — required or optional runtime configuration. See deployment environment for the actual value.
+- `WEBAPP_IMPORT_TOKEN` — required or optional runtime configuration. See deployment environment for the actual value.
+- `WEBAPP_PORT` — required or optional runtime configuration. See deployment environment for the actual value.
 
-Run the Telegram bot:
-
-```bash
-set -a
-. ./.env
-set +a
-PYTHONPATH=src python3 -m wallet_cleanup_bot.main
-```
-
-## Telegram setup
-
-1. Create a bot via `@BotFather` and put the token in `TELEGRAM_BOT_TOKEN`.
-2. Send any message to the bot.
-3. Get `chat_id` through the Bot API:
+## Setup
 
 ```bash
-curl "https://api.telegram.org/bot<token>/getUpdates"
+git clone https://github.com/MilaArtyNew/wallet-cleanup-bot
+cd wallet-cleanup-bot
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
 ```
 
-4. Fill `.env` using `.env.example` as a template:
+## Running Locally
 
 ```bash
-TELEGRAM_BOT_TOKEN=123:abc
-TELEGRAM_CHAT_ID=123456789
-TELEGRAM_ALLOWED_USER_ID=123456789
+python main.py
 ```
 
-`.env` is included in `.gitignore`; tokens must not be committed to the repository.
+## Bot Commands
 
-5. Start the bot:
+No interactive Telegram commands were detected automatically. If this service sends alerts only, document the operational controls here when they are added.
 
-```bash
-set -a
-. ./.env
-set +a
-PYTHONPATH=src python3 -m wallet_cleanup_bot.main
-```
+If a command requires extra input and the argument is missing, the bot should ask a follow-up question instead of failing silently.
 
-## Runtime flags
+## Deployment Notes
 
-`DEMO_DATA_ENABLED=false` by default so the bot does not show hardcoded demo balances as real wallet data.
+- Keep secrets in the deployment platform environment variables, not in Git.
+- Use the default branch as the source of truth for deployments.
+- Check logs after every deployment and verify the `/status` or health endpoint when available.
+- If the project uses a scheduler, verify timezone assumptions and idempotency before enabling it in production.
 
-`LIVE_NATIVE_SCANNER_ENABLED=true` enables real native balance scanning through public RPCs for Ethereum, Base, Arbitrum, Optimism, Polygon, BNB, Avalanche, Linea, and zkSync. ERC-20 scanning requires a separate indexer API.
+## Operational Notes
 
-`MORALIS_ERC20_SCANNER_ENABLED=true` enables ERC-20 balances through the Moralis Token Balances endpoint.
+- Review logs after startup for missing environment variables or API authentication errors.
+- Keep command names in English and document every user-facing command in this README.
+- For Telegram bots, `/help` should list the same commands documented here.
+- Inline buttons should edit the original message with the final status rather than sending duplicate messages.
 
-`LIVE_ROUTES_ENABLED=true` enables LI.FI quote proposals. After `Approve`, the bot provides an `Unlock & Execute` link: the encrypted keystore is decrypted in the browser, and approval/route transactions are signed there.
+## Troubleshooting
 
-## Telegram commands
+- **Bot does not respond:** verify the bot token, webhook/polling mode, and chat permissions.
+- **Missing data:** check API keys, rate limits, and upstream service status.
+- **Deployment starts but exits:** inspect platform logs for missing environment variables or import errors.
+- **Commands differ from README:** update the command list here and in the bot command menu at the same time.
 
-- `/add_wallet label` — create an `Import key` button; the key is encrypted in the web/Mini App before being sent to the server.
-- `/remove_wallet 1` or `/remove_wallet 0x...` — remove a wallet.
-- `/wallets` — show saved wallets.
-- `/check_wallet label`, `/check_wallet 1`, or `/check_wallet 0x...` — check a specific wallet.
-- `/check_all` — check all saved wallets.
+## Security
 
-Private keys are never typed into Telegram messages. They are entered in the web/Mini App form, encrypted locally on the device with `ethers.Wallet.encrypt(password)`, and only the encrypted keystore JSON is stored on the server.
-
-For each detected balance, the bot shows a card with buttons:
-
-- `Find route` — find a swap/bridge route through LI.FI.
-- `Withdraw` — enter a destination address in Telegram and open `Unlock & Send` for direct ERC-20/native withdrawal.
-- `Skip` — close the card.
-
-For mobile use, `WEBAPP_BASE_URL` must be a public HTTPS URL. Local `http://127.0.0.1:8787` is suitable only for server-side testing.
-
-Current persistent URL:
-
-```bash
-WEBAPP_BASE_URL=https://guacamole60977.hostkey.in
-```
-
-It is proxied through the existing nginx-certbot container to the local web server at `127.0.0.1:8787`.
-
-## Filtering rules
-
-- In protected gas chains, the native token is not touched while its value is below the threshold.
-- If the native token in a protected chain is above the threshold, the bot proposes cleaning up only the excess.
-- ERC-20 tokens can be processed in both protected and regular chains.
-- An asset is skipped if its value is below the gas fee, there is no liquidity, or the token looks suspicious.
-- Approval is always item-by-item: `approve`, `skip`, `blacklist_token`, `change_threshold`.
+- Never commit `.env` files, API keys, private keys, Telegram tokens, or session strings.
+- Use `.env.example` for placeholders only.
+- Rotate any credential that was accidentally committed.
